@@ -19,22 +19,26 @@ The repository may include:
 - Lake projects with structured Lean code
 - Notes and experiments using Lean 4 features
 
+Lean Projects Repository
+=========================
+
+This repository contains projects and exercises written in Lean 4.
+
 Getting Started
 ---------------
 
-To use this repository:
+1. Install Lean 4:
+   https://leanprover.github.io/download/
+   (Recommended to install via the elan toolchain manager)
 
-1. Install Lean 4 (recommended via elan): https://leanprover.github.io/
-2. Clone the repository:
+2. Install Veil:
+   Follow the installation instructions at Veil's official repository or website.
 
-   git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
-   cd YOUR-REPO
+3. Install Rust:
+   https://www.rust-lang.org/tools/install
 
-3. If it is a Lake project:
+After installing these tools, clone this repository and start exploring the Lean projects.
 
-   lake build
-
-4. Open in Visual Studio Code with the Lean 4 extension for the best experience.
 
 Contributing
 ------------
