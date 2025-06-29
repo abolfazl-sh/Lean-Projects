@@ -1,0 +1,15 @@
+name = "deque lock-free"
+version = "0.1.0"
+defaultTargets = ["deque lock-free"]
+
+[[lean_lib]]
+name = "«Deque lockFree»"
+
+[[lean_exe]]
+name = "deque lock-free"
+root = "Main"
+
+[[require]]
+name = "veil"
+git = "https://github.com/verse-lab/veil.git"
+rev = "main"
