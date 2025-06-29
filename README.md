@@ -29,10 +29,9 @@ Getting Started
 
 1. Install Lean 4:
    https://leanprover.github.io/download/
-   (Recommended to install via the elan toolchain manager)
 
 2. Install Veil:
-   Follow the installation instructions at Veil's official repository or website.
+   https://github.com/verse-lab/veil
 
 3. Install Rust:
    https://www.rust-lang.org/tools/install
