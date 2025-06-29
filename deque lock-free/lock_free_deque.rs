@@ -26,43 +26,75 @@ impl<T> LockFreeDeque<T> {
     }
 
     pub fn push_back(&self, value: T) -> Result<(), T> {
-        let tail = self.tail.load(Ordering::Relaxed);
-        let head = self.head.load(Ordering::Acquire);
-        if tail - head == self.capacity {
-            return Err(value); // Full
+        loop {
+            let tail = self.tail.load(Ordering::Relaxed);
+            let head = self.head.load(Ordering::Acquire);
+            
+            // Check if deque is full
+            if tail - head >= self.capacity {
+                return Err(value);
+            }
+            
+            // Try to claim the tail position
+            if self.tail.compare_exchange_weak(
+                tail, 
+                tail + 1, 
+                Ordering::Release, 
+                Ordering::Relaxed
+            ).is_ok() {
+                // Successfully claimed the position, now write the value
+                unsafe {
+                    *self.buffer[tail % self.capacity].get() = Some(value);
+                }
+                return Ok(());
+            }
+            // CAS failed, retry
         }
-        unsafe {
-            *self.buffer[tail % self.capacity].get() = Some(value);
-        }
-        self.tail.store(tail + 1, Ordering::Release);
-        Ok(())
     }
 
     pub fn pop_front(&self) -> Option<T> {
-        let head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Acquire);
-        if head == tail {
-            return None; // Empty
+        loop {
+            let head = self.head.load(Ordering::Relaxed);
+            let tail = self.tail.load(Ordering::Acquire);
+            
+            // Check if deque is empty
+            if head >= tail {
+                return None;
+            }
+            
+            // Try to claim the head position
+            if self.head.compare_exchange_weak(
+                head, 
+                head + 1, 
+                Ordering::Release, 
+                Ordering::Relaxed
+            ).is_ok() {
+                // Successfully claimed the position, now read the value
+                let value = unsafe {
+                    (*self.buffer[head % self.capacity].get()).take()
+                };
+                return value;
+            }
+            // CAS failed, retry
         }
-        let value = unsafe {
-            (*self.buffer[head % self.capacity].get()).take()
-        };
-        self.head.store(head + 1, Ordering::Release);
-        value
     }
 
     pub fn len(&self) -> usize {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Relaxed);
-        tail - head
+        tail.saturating_sub(head)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        let head = self.head.load(Ordering::Relaxed);
+        let tail = self.tail.load(Ordering::Relaxed);
+        head >= tail
     }
 
     pub fn is_full(&self) -> bool {
-        self.len() == self.capacity
+        let head = self.head.load(Ordering::Relaxed);
+        let tail = self.tail.load(Ordering::Relaxed);
+        tail - head >= self.capacity
     }
 }
 
@@ -188,8 +220,6 @@ mod tests {
         let producer_deque = deque.clone();
         let consumer_deque = deque.clone();
         
-        let (tx, rx) = std::sync::mpsc::channel();
-        
         // Producer thread
         let producer = thread::spawn(move || {
             for i in 0..100 {
@@ -197,34 +227,25 @@ mod tests {
                     thread::sleep(Duration::from_millis(1));
                 }
             }
-            tx.send(()).unwrap();
         });
         
         // Consumer thread
         let consumer = thread::spawn(move || {
             let mut received = Vec::new();
-            loop {
+            while received.len() < 100 {
                 if let Some(value) = consumer_deque.pop_front() {
                     received.push(value);
-                    if received.len() >= 100 {
-                        break;
-                    }
                 } else {
-                    // Check if producer is done
-                    if rx.try_recv().is_ok() {
-                        // Producer finished, try to get remaining items
-                        while let Some(value) = consumer_deque.pop_front() {
-                            received.push(value);
-                        }
-                        break;
-                    }
                     thread::sleep(Duration::from_millis(1));
                 }
             }
             received
         });
         
+        // Wait for consumer to finish first (it will collect all 100 items)
         let received = consumer.join().unwrap();
+        
+        // Then wait for producer to finish
         producer.join().unwrap();
         
         // Verify we got all values
@@ -245,6 +266,69 @@ mod tests {
         assert_eq!(deque.pop_front(), Some("hello".to_string()));
         assert_eq!(deque.pop_front(), Some("world".to_string()));
         assert_eq!(deque.pop_front(), None);
+    }
+
+    #[test]
+    fn test_stress_concurrent_access() {
+        let deque = LockFreeDeque::with_capacity(50);
+        let num_threads = 2;
+        let operations_per_thread = 50;
+        
+        let mut producer_handles = Vec::new();
+        let mut consumer_handles = Vec::new();
+        
+        // Create producer threads
+        for thread_id in 0..num_threads / 2 {
+            let deque = deque.clone();
+            let handle = thread::spawn(move || {
+                for i in 0..operations_per_thread {
+                    let value = (thread_id * operations_per_thread + i) as i32;
+                    while deque.push_back(value).is_err() {
+                        thread::sleep(Duration::from_nanos(1));
+                    }
+                }
+            });
+            producer_handles.push(handle);
+        }
+        
+        // Create consumer threads
+        for _ in 0..num_threads / 2 {
+            let deque = deque.clone();
+            let handle = thread::spawn(move || {
+                let mut received = Vec::new();
+                while received.len() < operations_per_thread {
+                    if let Some(value) = deque.pop_front() {
+                        received.push(value);
+                    } else {
+                        thread::sleep(Duration::from_nanos(1));
+                    }
+                }
+                received
+            });
+            consumer_handles.push(handle);
+        }
+        
+        // Wait for all producers
+        for handle in producer_handles {
+            let _ = handle.join();
+        }
+        
+        // Wait for all consumers and collect results
+        let mut all_received = Vec::new();
+        for handle in consumer_handles {
+            if let Ok(received) = handle.join() {
+                all_received.extend(received);
+            }
+        }
+        
+        // Verify we got all expected values
+        assert_eq!(all_received.len(), (num_threads / 2) * operations_per_thread);
+        all_received.sort();
+        let expected: Vec<i32> = (0..((num_threads / 2) * operations_per_thread)).map(|x| x as i32).collect();
+        assert_eq!(all_received, expected);
+        
+        // Verify deque is empty
+        assert!(deque.is_empty());
     }
 }
 

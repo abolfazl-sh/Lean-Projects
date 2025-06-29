@@ -1,0 +1,10 @@
+[package]
+name = "lock-free-deque"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[[bin]]
+name = "lock_free_deque"
+path = "lock_free_deque.rs" 
